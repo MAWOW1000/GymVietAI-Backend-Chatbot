@@ -9,7 +9,26 @@ class ChatbotController {
             return;
         }
         this.genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY);
-        this.model = this.genAI.getGenerativeModel({ model: "gemini-pro" });
+        this.model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    }
+
+    async getActivePrompt() {
+        try {
+            const [rows] = await pool.query('SELECT content, content_en FROM chat_prompts WHERE is_active = true LIMIT 1');
+            if (rows.length > 0) {
+                return rows[0];
+            }
+            return null;
+        } catch (error) {
+            console.error('Error getting prompt from database:', error);
+            return null;
+        }
+    }
+
+    detectLanguage(text) {
+        // Simple language detection based on common Vietnamese diacritical marks
+        const vietnamesePattern = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
+        return vietnamesePattern.test(text) ? 'vi' : 'en';
     }
 
     async chat(req, res) {
@@ -19,11 +38,29 @@ class ChatbotController {
                 return res.status(400).json({ message: messages.MESSAGE_REQUIRED });
             }
 
-            // Use default prompt since database is not connected
-            const systemPrompt = {
-                role: "user",
-                parts: [{ text: "Bạn là một huấn luyện viên thể hình chuyên nghiệp, nhiệm vụ của bạn là tư vấn về tập luyện và dinh dưỡng. Hãy trả lời một cách chuyên nghiệp, ngắn gọn và dễ hiểu." }]
-            };
+            // Detect language
+            const language = this.detectLanguage(message);
+
+            // Get prompt from database
+            const dbPrompt = await this.getActivePrompt();
+            let systemPrompt;
+
+            if (dbPrompt) {
+                systemPrompt = {
+                    role: "user",
+                    parts: [{ text: language === 'vi' ? dbPrompt.content : dbPrompt.content_en }]
+                };
+            } else {
+                // Fallback prompt if database fails
+                const fallbackPrompt = language === 'vi' 
+                    ? "Bạn là một huấn luyện viên thể hình chuyên nghiệp, nhiệm vụ của bạn là tư vấn về tập luyện và dinh dưỡng. Hãy trả lời một cách chuyên nghiệp, ngắn gọn và dễ hiểu và không trả lời các câu hỏi không liên quan đến gym và sức khỏe."
+                    : "You are a professional fitness trainer, your mission is to provide advice on training and nutrition. Please respond professionally, concisely, and clearly. Only answer questions related to gym and health.";
+                
+                systemPrompt = {
+                    role: "user",
+                    parts: [{ text: fallbackPrompt }]
+                };
+            }
 
             // Generate chat response
             const chat = this.model.startChat({
@@ -35,6 +72,7 @@ class ChatbotController {
             
             return res.json({ 
                 message: response.text(),
+                language: language,
                 remainingChats: -1 // Unlimited chats
             });
 
