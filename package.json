@@ -2,6 +2,10 @@
   "name": "chatbot-service",
   "version": "1.0.0",
   "main": "server.js",
+  "scripts": {
+    "start": "nodemon src/server.js",
+    "start:prod": "node src/server.js"
+  },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "axios": "^1.7.9",
@@ -12,5 +16,8 @@
     "mysql2": "^3.11.4",
     "node-cache": "^5.1.2",
     "openai": "^4.73.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
   }
 }

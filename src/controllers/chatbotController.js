@@ -61,117 +61,32 @@ class ChatbotController {
     async chat(req, res) {
         try {
             const { message } = req.body;
-            const token = req.headers.authorization?.split(' ')[1];
-
             if (!message) {
-                return res.status(400).json({ message: messages.chat.invalidMessage });
+                return res.status(400).json({ message: messages.MESSAGE_REQUIRED });
             }
 
-            if (!token) {
-                return res.status(401).json({ message: messages.auth.tokenRequired });
-            }
+            // Use default prompt since database is not connected
+            const systemPrompt = {
+                role: "user",
+                parts: [{ text: "Bạn là một huấn luyện viên thể hình chuyên nghiệp, nhiệm vụ của bạn là tư vấn về tập luyện và dinh dưỡng. Hãy trả lời một cách chuyên nghiệp, ngắn gọn và dễ hiểu." }]
+            };
 
-            // Validate token và lấy thông tin user
-            let userData;
-            try {
-                userData = await userService.validateToken(token);
-            } catch (error) {
-                return res.status(401).json({ message: messages.auth.invalidToken });
-            }
-
-            // Kiểm tra chat limit
-            const chatLimit = await this.checkChatLimit(userData.id, token);
-            if (!chatLimit.canChat) {
-                return res.status(403).json({
-                    message: messages.chat.limitExceeded,
-                    remainingChats: 0
-                });
-            }
-
-            // Kiểm tra cache
-            const cachedResponse = cacheService.getChatResponse(message);
-            if (cachedResponse) {
-                await pool.execute(
-                    'INSERT INTO chat_logs (user_id, message, response, is_cached) VALUES (?, ?, ?, ?)',
-                    [userData.id, message, cachedResponse.response, true]
-                );
-
-                return res.json({
-                    message: cachedResponse.response,
-                    cached: true,
-                    timestamp: cachedResponse.timestamp,
-                    remainingChats: chatLimit.remainingChats
-                });
-            }
-
-            // Lấy thông tin user từ auth service
-            const userProfile = await userService.getUserProfile(userData.id, token);
-            
-            // Tạo context cho AI dựa trên profile
-            const userContext = `
-                Thông tin người dùng:
-                - Tên: ${userProfile.firstname} ${userProfile.lastname}
-                - Giới tính: ${userProfile.gender}
-                - Chiều cao: ${userProfile.height ? userProfile.height + 'cm' : 'Chưa cập nhật'}
-                - Cân nặng: ${userProfile.weight ? userProfile.weight + 'kg' : 'Chưa cập nhật'}
-                - Trình độ: ${userProfile.level || 'Beginner'}
-                - Mục tiêu: ${userProfile.goal || 'Chưa cập nhật'}
-            `;
-
-            // Lấy prompt từ database
-            const [prompts] = await pool.execute(
-                'SELECT content FROM chat_prompts WHERE is_active = true ORDER BY created_at DESC LIMIT 1'
-            );
-
-            const systemPrompt = prompts[0]?.content || 'Bạn là chatbot tư vấn gym';
+            // Generate chat response
             const chat = this.model.startChat({
-                history: [
-                    {
-                        role: "user",
-                        parts: [{ text: systemPrompt }]
-                    },
-                    {
-                        role: "model",
-                        parts: [{ text: "Tôi đã hiểu và sẽ tuân theo hướng dẫn." }]
-                    },
-                    {
-                        role: "user",
-                        parts: [{ text: userContext }]
-                    },
-                    {
-                        role: "model",
-                        parts: [{ text: "Tôi đã ghi nhận thông tin người dùng." }]
-                    }
-                ]
+                history: [systemPrompt]
             });
 
             const result = await chat.sendMessage([{ text: message }]);
-            const response = result.response.text();
+            const response = await result.response;
 
-            // Lưu vào cache
-            cacheService.setChatResponse(message, response);
-
-            // Lưu chat history
-            await pool.execute(
-                'INSERT INTO chat_history (user_id, user_message, bot_response) VALUES (?, ?, ?)',
-                [userData.id, message, response]
-            );
-
-            // Log chat
-            await pool.execute(
-                'INSERT INTO chat_logs (user_id, message, response, is_cached) VALUES (?, ?, ?, ?)',
-                [userData.id, message, response, false]
-            );
-
-            res.json({
-                message: response,
-                cached: false,
-                remainingChats: chatLimit.remainingChats
+            return res.json({ 
+                message: response.text(),
+                remainingChats: -1 // Unlimited chats
             });
 
         } catch (error) {
             console.error('Chat error:', error);
-            res.status(500).json({ message: messages.server.error });
+            return res.status(500).json({ message: messages.INTERNAL_ERROR });
         }
     }
 
