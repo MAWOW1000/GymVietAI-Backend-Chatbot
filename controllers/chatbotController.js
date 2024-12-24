@@ -38,33 +38,27 @@ class ChatbotController {
                 return res.status(400).json({ message: messages.MESSAGE_REQUIRED });
             }
 
-            // Detect language
-            const language = this.detectLanguage(message);
-
-            // Get prompt from database
+            // Get prompt from database first
             const dbPrompt = await this.getActivePrompt();
-            let systemPrompt;
-
-            if (dbPrompt) {
-                systemPrompt = {
-                    role: "user",
-                    parts: [{ text: language === 'vi' ? dbPrompt.content : dbPrompt.content_en }]
-                };
-            } else {
-                // Fallback prompt if database fails
-                const fallbackPrompt = language === 'vi' 
-                    ? "Bạn là một huấn luyện viên thể hình chuyên nghiệp, nhiệm vụ của bạn là tư vấn về tập luyện và dinh dưỡng. Hãy trả lời một cách chuyên nghiệp, ngắn gọn và dễ hiểu và không trả lời các câu hỏi không liên quan đến gym và sức khỏe."
-                    : "You are a professional fitness trainer, your mission is to provide advice on training and nutrition. Please respond professionally, concisely, and clearly. Only answer questions related to gym and health.";
-                
-                systemPrompt = {
-                    role: "user",
-                    parts: [{ text: fallbackPrompt }]
-                };
+            if (!dbPrompt) {
+                return res.status(500).json({ message: "No active prompt found in database" });
             }
+
+            // Create chat history with both language prompts
+            const chatHistory = [
+                {
+                    role: "user",
+                    parts: [{ text: dbPrompt.content }] // Vietnamese prompt
+                },
+                {
+                    role: "user",
+                    parts: [{ text: dbPrompt.content_en }] // English prompt
+                }
+            ];
 
             // Generate chat response
             const chat = this.model.startChat({
-                history: [systemPrompt]
+                history: chatHistory
             });
             
             const result = await chat.sendMessage([{ text: message }]);
@@ -72,8 +66,7 @@ class ChatbotController {
             
             return res.json({ 
                 message: response.text(),
-                language: language,
-                remainingChats: -1 // Unlimited chats
+                remainingChats: -1
             });
 
         } catch (error) {
